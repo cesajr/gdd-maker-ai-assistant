@@ -1,111 +1,149 @@
 // src/pages/GddDetailPage.tsx
 
-// A importação de 'ChangeEvent' foi removida, pois não é mais usada diretamente.
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useParams, Link } from 'react-router-dom';
 import api from '../services/api';
-import ReactMarkdown from 'react-markdown';
-import { ArrowLeftIcon, PencilIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, DocumentArrowDownIcon } from '@heroicons/react/24/outline';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
-type Project = {
-  id: string;
-  title: string;
-  content: string;
+// Tipagem flexível para aceitar valores complexos da IA
+type GddData = { [key: string]: any };
+
+// Dicionário de tradução para os títulos das seções
+const keyToTitleMap: { [key: string]: string } = {
+  highConcept: "Conceito Principal (High Concept)",
+  genre: "Gênero",
+  targetAudience: "Público-Alvo",
+  gameplayLoop: "Loop de Gameplay",
+  coreMechanics: "Mecânicas Centrais",
+  visualStyle: "Estilo Visual e Direção de Arte",
+  soundDesign: "Design de Som e Trilha Sonora",
+  storySynopsis: "Sinopse da História",
+  worldBuilding: "Construção do Mundo (World Building)",
+  characterProgression: "Progressão do Personagem",
+  combatSystem: "Sistema de Combate",
+  questSystem: "Sistema de Missões",
+  gameObjective: "Objetivo do Jogo",
+  factions: "Facções",
+  resourceManagement: "Gerenciamento de Recursos",
+  techTree: "Árvore de Tecnologias",
+  unitTypes: "Tipos de Unidades",
+  winConditions: "Condições de Vitória",
 };
 
 const GddDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const [project, setProject] = useState<Project | null>(null);
-  const [content, setContent] = useState('');
-  const [title, setTitle] = useState('');
+  const [gdd, setGdd] = useState<GddData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isEditMode, setIsEditMode] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const gddContentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const fetchProject = async () => {
-      try {
-        const response = await api.get(`/gdds/${id}`);
-        setProject(response.data);
-        setContent(response.data.content);
-        setTitle(response.data.title);
-      } catch (error) {
-        console.error("Erro ao buscar detalhes do projeto:", error);
-        alert("Não foi possível carregar o projeto.");
-        navigate('/dashboard');
-      } finally {
-        setLoading(false);
-      }
-    };
-    if (id) { fetchProject(); }
-  }, [id, navigate]);
+    if (!id) return;
+    api.get(`/gdds/${id}`)
+      .then(response => {
+        setGdd(response.data.gdd);
+      })
+      .catch(err => console.error("Erro ao carregar projeto", err))
+      .finally(() => setLoading(false));
+  }, [id]);
 
-  const handleSave = async () => {
-    setIsSaving(true);
-    try {
-      await api.put(`/gdds/${id}`, { title, content });
-      if (project) {
-        setProject({ ...project, title, content });
+  const handleExportPdf = () => {
+    const contentToPrint = gddContentRef.current;
+    if (!contentToPrint) return;
+    setIsExporting(true);
+    html2canvas(contentToPrint, {
+      scale: 2,
+      backgroundColor: '#111827',
+      onclone: (doc) => {
+        Array.from(doc.getElementsByTagName('*')).forEach(el => {
+          if (el instanceof HTMLElement) el.style.color = '#D1D5DB';
+        });
       }
-      setIsEditMode(false);
-    } catch (error) {
-      console.error("Erro ao salvar o projeto:", error);
-      alert("Falha ao salvar o projeto.");
-    } finally {
-      setIsSaving(false);
-    }
+    }).then(canvas => {
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`${gdd?.title?.replace(/ /g, '_') || 'gdd'}.pdf`);
+      setIsExporting(false);
+    });
   };
 
-  const handleCancelEdit = () => {
-    if(project) {
-        setContent(project.content);
-        setTitle(project.title);
+  const renderGddValue = (value: any) => {
+    if (Array.isArray(value)) {
+      return (
+        <ul className="list-disc list-inside pl-4 space-y-2">
+          {value.map((item, index) => (
+            <li key={index} className="text-gray-300">
+              {typeof item === 'string' && item}
+              {typeof item === 'object' && item !== null && (
+                <>
+                  <strong className="text-gray-100">{item.name || item.title || 'Item'}:</strong>
+                  <span> {item.description || Object.values(item)[0]}</span>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      );
     }
-    setIsEditMode(false);
-  }
+    if (typeof value === 'object' && value !== null) {
+      return (
+        <div className="pl-4 border-l-2 border-gray-700">
+          {Object.entries(value).map(([key, val]) => (
+            <div key={key} className="mb-2">
+              <strong className="text-gray-100">{key}:</strong>
+              <span className="text-gray-300"> {String(val)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return (
+      <p className="text-gray-300 leading-relaxed whitespace-pre-wrap">{String(value)}</p>
+    );
+  };
 
-  if (loading) return <div className="text-white text-center p-10">Carregando projeto...</div>;
-  if (!project) return <div className="text-white text-center p-10">Projeto não encontrado.</div>;
+  const renderGddSection = (key: string, value: any) => {
+    if (key === 'title') return null;
+    const title = keyToTitleMap[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+    return (
+      <div key={key} className="mb-8 break-inside-avoid">
+        <h2 className="text-2xl font-semibold text-teal-400 border-b border-gray-600 pb-2 mb-3">{title}</h2>
+        {renderGddValue(value)}
+      </div>
+    );
+  };
+
+  if (loading) return <div className="text-center p-10 text-white">Carregando Projeto...</div>;
+  if (!gdd) return <div className="text-center p-10 text-white">Projeto não encontrado.</div>;
 
   return (
     <div className="bg-gray-800 text-white min-h-screen p-4 sm:p-8">
-      <div className="max-w-5xl mx-auto">
-        <header className="flex items-center justify-between mb-6">
-          <Link to="/dashboard" className="flex items-center text-teal-400 hover:text-teal-300">
-            <ArrowLeftIcon className="h-5 w-5 mr-2" />
-            Voltar para o Dashboard
-          </Link>
-          {isEditMode ? (
-            <div className="flex gap-4">
-                <button onClick={handleCancelEdit} className="flex items-center text-gray-400 hover:text-white"><XMarkIcon className="h-5 w-5 mr-1" /> Cancelar</button>
-                <button onClick={handleSave} disabled={isSaving} className="flex items-center justify-center bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg"><CheckIcon className="h-5 w-5 mr-2" />{isSaving ? 'Salvando...' : 'Salvar'}</button>
-            </div>
-          ) : (
-            <button onClick={() => setIsEditMode(true)} className="flex items-center justify-center bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg"><PencilIcon className="h-5 w-5 mr-2" /> Editar</button>
-          )}
-        </header>
+      {/* --- O CABEÇALHO FOI RESTAURADO AQUI --- */}
+      <header className="max-w-4xl mx-auto flex justify-between items-center mb-6">
+        <Link to="/dashboard" className="flex items-center text-teal-400 hover:underline">
+          <ArrowLeftIcon className="h-5 w-5 inline-block mr-2" />
+          Voltar ao Dashboard
+        </Link>
+        <button onClick={handleExportPdf} disabled={isExporting} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg flex items-center disabled:bg-gray-500">
+          <DocumentArrowDownIcon className="h-5 w-5 mr-2" />
+          {isExporting ? 'Exportando...' : 'Exportar para PDF'}
+        </button>
+      </header>
 
-        <main className="bg-gray-900 p-6 sm:p-8 rounded-xl shadow-lg">
-          {isEditMode ? (
-            <>
-              <label htmlFor="gdd-title" className="block text-sm font-medium text-gray-400 mb-1">Título do Projeto</label>
-              <input id="gdd-title" type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="w-full p-2 bg-gray-800 border-2 border-gray-700 rounded-lg mb-6 text-2xl font-bold"/>
-              <label htmlFor="gdd-content" className="block text-sm font-medium text-gray-400 mb-1">Conteúdo (Markdown)</label>
-              <textarea id="gdd-content" value={content} onChange={(e) => setContent(e.target.value)} className="w-full h-[70vh] p-3 bg-gray-800 border-2 border-gray-700 rounded-lg font-mono"/>
-            </>
-          ) : (
-            <>
-              <h1 className="text-4xl font-bold mb-6 border-b border-gray-700 pb-4">{title}</h1>
-              <article className="prose prose-invert lg:prose-xl max-w-none">
-                <ReactMarkdown>{content}</ReactMarkdown>
-              </article>
-            </>
-          )}
-        </main>
+      {/* --- O CONTEÚDO PRINCIPAL --- */}
+      <div ref={gddContentRef} className="max-w-4xl mx-auto bg-gray-900 p-10 rounded-lg shadow-lg">
+        <h1 className="text-5xl font-extrabold text-center mb-12 text-white">{gdd.title || 'Projeto sem Título'}</h1>
+        {Object.entries(gdd).map(([key, value]) => renderGddSection(key, value))}
       </div>
     </div>
   );
 };
 
 export default GddDetailPage;
+
+
