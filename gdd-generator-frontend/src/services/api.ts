@@ -3,7 +3,7 @@ import axios from 'axios';
 import { auth } from './firebase';
 
 const api = axios.create({
-  baseURL: 'http://localhost:3001/api',
+  baseURL: 'https://gdd-maker-ai-assistant.onrender.com',
 });
 
 // Interceptor que adiciona o token de autenticação em todas as requisições
